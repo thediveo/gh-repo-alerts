@@ -30,8 +30,10 @@ const (
 	ansiBrightCyan = "\033[96m"
 	ansiYellow     = "\033[33m"
 	ansiRed        = "\033[31m"
-	ansiCriticalBg = "\033[41m"
+	ansiGray       = "\033[90m"
 	ansiWhite      = "\033[97m"
+
+	ansiCriticalBg = "\033[41m"
 
 	spinnerDelay = 80 * time.Millisecond
 )
@@ -325,12 +327,14 @@ func printAlert(repo string, alert Alert) {
 	}
 
 	fmt.Printf(
-		"  #%d [%s%s%s] %s\n",
+		"  #%d [%s%s%s] %s%s%s\n",
 		alert.Number,
 		severityStyle,
 		severityLabel,
 		ansiReset,
+		ansiGray,
 		alert.Dependency.Package.Name,
+		ansiReset,
 	)
 
 	if alert.SecurityAdvisory.Summary != "" {
@@ -341,8 +345,10 @@ func printAlert(repo string, alert Alert) {
 	}
 
 	fmt.Printf(
-		"      %s\n",
+		"      %s%s%s\n",
+		ansiGray,
 		alertURL(repo, alert.Number),
+		ansiReset,
 	)
 }
 
