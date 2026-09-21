@@ -23,9 +23,11 @@ const (
 	perPage        = 100
 	requestTimeout = 30 * time.Second
 
-	ansiReset      = "\033[0m"
-	ansiBold       = "\033[1m"
-	ansiUnderline  = "\033[4m"
+	ansiReset     = "\033[0m"
+	ansiBold      = "\033[1m"
+	ansiCursive   = "\033[3m"
+	ansiUnderline = "\033[4m"
+
 	ansiCyan       = "\033[36m"
 	ansiBrightCyan = "\033[96m"
 	ansiYellow     = "\033[33m"
@@ -265,22 +267,20 @@ func printAlert(repo string, alert Alert) {
 	}
 
 	if alert.SecurityAdvisory.Summary != "" {
-		fmt.Printf("  #%d [%s%s%s] %s\n",
-			alert.Number,
+		fmt.Printf("  [%s%s%s] %s%s%s\n",
 			severityStyle, severityLabel, ansiReset,
-			alert.SecurityAdvisory.Summary,
+			ansiCursive, alert.SecurityAdvisory.Summary, ansiReset,
 		)
 	} else {
-		fmt.Printf("  #%d [%s%s%s]\n",
-			alert.Number,
+		fmt.Printf("  [%s%s%s]\n",
 			severityStyle, severityLabel, ansiReset,
 		)
 	}
 
-	fmt.Printf("      %s%s%s\n",
+	fmt.Printf("      %s %s%s\n",
 		ansiGray, alert.Dependency.Package.Name, ansiReset)
 
-	fmt.Printf("      %s%s%s\n",
+	fmt.Printf("      %s󱝾 %s%s\n",
 		ansiGray, alertURL(repo, alert.Number), ansiReset)
 }
 
@@ -356,8 +356,8 @@ func main() {
 		}
 
 		fmt.Printf(
-			"%s%s%s%s%s: %d open alerts\n",
-			ansiBold, ansiBrightCyan, ansiUnderline, repo.FullName, ansiReset,
+			" %s%s%s: %d open alerts\n",
+			ansiBold, repo.FullName, ansiReset,
 			len(alerts),
 		)
 
