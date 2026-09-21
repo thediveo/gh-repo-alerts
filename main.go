@@ -72,15 +72,10 @@ type Alert struct {
 }
 
 func newSpinner(message string) *spinner.Spinner {
-	s := spinner.New(
-		spinner.CharSets[14],
-		spinnerDelay,
-		spinner.WithWriter(os.Stderr),
-	)
-
+	s := spinner.New(spinner.CharSets[14], spinnerDelay,
+		spinner.WithWriter(os.Stderr))
 	s.Suffix = " " + message
 	s.Start()
-
 	return s
 }
 
@@ -99,63 +94,49 @@ func (e *requestError) Unwrap() error {
 	return e.Err
 }
 
-func request(
-	ctx context.Context,
-	client *api.RESTClient,
-	path string,
-) ([]byte, http.Header, int, error) {
+func request(ctx context.Context, client *api.RESTClient, path string) ([]byte, http.Header, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
-	resp, err := client.RequestWithContext(
-		reqCtx,
-		http.MethodGet,
-		path,
-		nil,
-	)
+	resp, err := client.RequestWithContext(reqCtx, http.MethodGet, path, nil)
 
 	if err != nil {
 		if resp != nil {
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			body, readErr := io.ReadAll(resp.Body)
 			if readErr != nil {
-				return nil, resp.Header, resp.StatusCode, readErr
+				return nil, resp.Header, readErr
 			}
 
-			return body, resp.Header, resp.StatusCode,
-				&requestError{
-					StatusCode: resp.StatusCode,
-					Err:        err,
-				}
+			return body, resp.Header, &requestError{
+				StatusCode: resp.StatusCode,
+				Err:        err,
+			}
 		}
 
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.Header, resp.StatusCode, err
+		return nil, resp.Header, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return body, resp.Header, resp.StatusCode,
-			&requestError{
-				StatusCode: resp.StatusCode,
-				Err: fmt.Errorf(
-					"GitHub API returned HTTP %d",
-					resp.StatusCode,
-				),
-			}
+		return body, resp.Header, &requestError{
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode),
+		}
 	}
 
-	return body, resp.Header, resp.StatusCode, nil
+	return body, resp.Header, nil
 }
 
 func nextLink(header string) string {
-	for _, part := range strings.Split(header, ",") {
+	for part := range strings.SplitSeq(header, ",") {
 		part = strings.TrimSpace(part)
 
 		if !strings.Contains(part, `rel="next"`) {
@@ -173,17 +154,13 @@ func nextLink(header string) string {
 	return ""
 }
 
-func getUser(
-	ctx context.Context,
-	client *api.RESTClient,
-) (*User, error) {
-	body, _, _, err := request(ctx, client, "user")
+func getUser(ctx context.Context, client *api.RESTClient) (*User, error) {
+	body, _, err := request(ctx, client, "user")
 	if err != nil {
 		return nil, err
 	}
 
 	var user User
-
 	if err := json.Unmarshal(body, &user); err != nil {
 		return nil, fmt.Errorf("decode user: %w", err)
 	}
@@ -195,10 +172,7 @@ func getUser(
 	return &user, nil
 }
 
-func getRepositories(
-	ctx context.Context,
-	client *api.RESTClient,
-) ([]Repository, error) {
+func getRepositories(ctx context.Context, client *api.RESTClient) ([]Repository, error) {
 	var repos []Repository
 
 	path := fmt.Sprintf(
@@ -207,88 +181,54 @@ func getRepositories(
 	)
 
 	for path != "" {
-		body, headers, _, err := request(ctx, client, path)
-
+		body, headers, err := request(ctx, client, path)
 		if err != nil {
-			return nil, fmt.Errorf(
-				"list repositories: %w",
-				err,
-			)
+			return nil, fmt.Errorf("list repositories: %w", err)
 		}
 
 		var page []Repository
-
 		if err := json.Unmarshal(body, &page); err != nil {
-			return nil, fmt.Errorf(
-				"decode repositories: %w",
-				err,
-			)
+			return nil, fmt.Errorf("decode repositories: %w", err)
 		}
 
 		repos = append(repos, page...)
-
 		path = nextLink(headers.Get("Link"))
 	}
 
 	return repos, nil
 }
 
-func getAlerts(
-	ctx context.Context,
-	client *api.RESTClient,
-	owner string,
-	repo string,
-) ([]Alert, error) {
+func getAlerts(ctx context.Context, client *api.RESTClient, owner string, repo string) ([]Alert, error) {
 	path := fmt.Sprintf(
 		"repos/%s/%s/dependabot/alerts?state=open&per_page=%d",
-		owner,
-		repo,
-		perPage,
-	)
+		owner, repo, perPage)
 
 	var alerts []Alert
 
 	for path != "" {
-		body, headers, _, err := request(
-			ctx,
-			client,
-			path,
-		)
+		body, headers, err := request(ctx, client, path)
 
 		if err != nil {
 			// GitHub returns HTTP 403 with this message when
 			// Dependabot alerts are disabled for the repository.
 			//
 			// This is an expected condition, so silently skip it.
-			var httpErr *api.HTTPError
-			if errors.As(err, &httpErr) {
-				if strings.Contains(
-					httpErr.Error(),
-					"Dependabot alerts are disabled for this repository",
-				) {
+			if httpErr, ok := errors.AsType[*api.HTTPError](err); ok {
+				if strings.Contains(httpErr.Error(), "Dependabot alerts are disabled for this repository") {
 					return nil, nil
 				}
 			}
 
-			return nil, fmt.Errorf(
-				"get Dependabot alerts: %w",
-				err,
-			)
+			return nil, fmt.Errorf("get Dependabot alerts: %w", err)
 		}
 
 		var page []Alert
 
 		if err := json.Unmarshal(body, &page); err != nil {
-			return nil, fmt.Errorf(
-				"decode alerts for %s/%s: %w",
-				owner,
-				repo,
-				err,
-			)
+			return nil, fmt.Errorf("decode alerts for %s/%s: %w", owner, repo, err)
 		}
 
 		alerts = append(alerts, page...)
-
 		path = nextLink(headers.Get("Link"))
 	}
 
@@ -298,15 +238,11 @@ func getAlerts(
 func alertURL(repo string, number int) string {
 	return fmt.Sprintf(
 		"https://github.com/%s/security/dependabot/%d",
-		repo,
-		number,
-	)
+		repo, number)
 }
 
 func printAlert(repo string, alert Alert) {
-	severity := strings.ToUpper(
-		alert.SecurityVulnerability.Severity,
-	)
+	severity := strings.ToUpper(alert.SecurityVulnerability.Severity)
 
 	severityStyle := ansiBold
 	severityLabel := severity
@@ -326,34 +262,24 @@ func printAlert(repo string, alert Alert) {
 		severityLabel = "⚠ CRITICAL"
 	}
 
-	fmt.Printf(
-		"  #%d [%s%s%s] %s%s%s\n",
-		alert.Number,
-		severityStyle,
-		severityLabel,
-		ansiReset,
-		ansiGray,
-		alert.Dependency.Package.Name,
-		ansiReset,
-	)
-
 	if alert.SecurityAdvisory.Summary != "" {
-		fmt.Printf(
-			"      %s\n",
+		fmt.Printf("  #%d [%s%s%s] %s\n",
+			alert.Number,
+			severityStyle, severityLabel, ansiReset,
 			alert.SecurityAdvisory.Summary,
+		)
+	} else {
+		fmt.Printf("  #%d [%s%s%s]\n",
+			alert.Number,
+			severityStyle, severityLabel, ansiReset,
 		)
 	}
 
-	fmt.Printf(
-		"      %s%s%s\n",
-		ansiGray,
-		alertURL(repo, alert.Number),
-		ansiReset,
-	)
-}
+	fmt.Printf("      %s%s%s\n",
+		ansiGray, alert.Dependency.Package.Name, ansiReset)
 
-func interrupted(ctx context.Context) bool {
-	return ctx.Err() != nil
+	fmt.Printf("      %s%s%s\n",
+		ansiGray, alertURL(repo, alert.Number), ansiReset)
 }
 
 func main() {
@@ -366,61 +292,40 @@ func main() {
 
 	client, err := api.DefaultRESTClient()
 	if err != nil {
-		fmt.Fprintf(
-			os.Stderr,
-			"error creating GitHub client: %v\n",
-			err,
-		)
+		fmt.Fprintf(os.Stderr, "error creating GitHub client: %v\n", err)
 		os.Exit(1)
 	}
 
 	s := newSpinner("Getting GitHub user")
-
 	user, err := getUser(ctx, client)
-
 	s.Stop()
 
 	if err != nil {
-		if interrupted(ctx) {
+		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "Interrupted.")
 			os.Exit(130)
 		}
 
-		fmt.Fprintf(
-			os.Stderr,
-			"error getting user: %v\n",
-			err,
-		)
+		fmt.Fprintf(os.Stderr, "error getting user: %v\n", err)
 		os.Exit(1)
 	}
 
-	s = newSpinner(
-		fmt.Sprintf(
-			"Getting repositories for %s",
-			user.Login,
-		),
-	)
-
+	s = newSpinner(fmt.Sprintf("Getting repositories for %s", user.Login))
 	repos, err := getRepositories(ctx, client)
-
 	s.Stop()
 
 	if err != nil {
-		if interrupted(ctx) {
+		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "Interrupted.")
 			os.Exit(130)
 		}
 
-		fmt.Fprintf(
-			os.Stderr,
-			"error getting repositories: %v\n",
-			err,
-		)
+		fmt.Fprintf(os.Stderr, "error getting repositories: %v\n", err)
 		os.Exit(1)
 	}
 
 	for i, repo := range repos {
-		if interrupted(ctx) {
+		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "Interrupted.")
 			os.Exit(130)
 		}
@@ -429,36 +334,18 @@ func main() {
 			continue
 		}
 
-		message := fmt.Sprintf(
-			"Checking %s (%d/%d)",
-			repo.FullName,
-			i+1,
-			len(repos),
-		)
-
-		s := newSpinner(message)
-
-		alerts, err := getAlerts(
-			ctx,
-			client,
-			repo.Owner.Login,
-			repo.Name,
-		)
-
+		s := newSpinner(fmt.Sprintf("Checking %s (%d/%d)",
+			repo.FullName, i+1, len(repos)))
+		alerts, err := getAlerts(ctx, client, repo.Owner.Login, repo.Name)
 		s.Stop()
 
-		if interrupted(ctx) {
+		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "Interrupted.")
 			os.Exit(130)
 		}
 
 		if err != nil {
-			fmt.Fprintf(
-				os.Stderr,
-				"warning: %s: %v\n",
-				repo.FullName,
-				err,
-			)
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", repo.FullName, err)
 			continue
 		}
 
@@ -468,11 +355,7 @@ func main() {
 
 		fmt.Printf(
 			"%s%s%s%s%s: %d open alerts\n",
-			ansiBold,
-			ansiBrightCyan,
-			ansiUnderline,
-			repo.FullName,
-			ansiReset,
+			ansiBold, ansiBrightCyan, ansiUnderline, repo.FullName, ansiReset,
 			len(alerts),
 		)
 
