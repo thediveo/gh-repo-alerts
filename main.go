@@ -35,8 +35,10 @@ const (
 
 	ansiCriticalBg = "\033[41m"
 
-	spinnerDelay = 80 * time.Millisecond
+	spinnerDelay = 120 * time.Millisecond
 )
+
+var spinnerDots = []string{"⠉", "⠘", "⠰", "⢠", "⣀", "⡄", "⠆", "⠃"}
 
 type User struct {
 	Login string `json:"login"`
@@ -72,7 +74,7 @@ type Alert struct {
 }
 
 func newSpinner(message string) *spinner.Spinner {
-	s := spinner.New(spinner.CharSets[14], spinnerDelay,
+	s := spinner.New(spinnerDots, spinnerDelay,
 		spinner.WithWriter(os.Stderr))
 	s.Suffix = " " + message
 	s.Start()
