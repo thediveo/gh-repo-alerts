@@ -310,16 +310,12 @@ func printAlert(repo string, alert Alert) {
 }
 
 func getAlertsInParallel(ctx context.Context, client *api.RESTClient, repos []Repository) []repoAlerts {
-	results := make([]repoAlerts, len(repos))
-
 	if len(repos) == 0 {
-		return results
+		return nil
 	}
 
-	// Buffer all jobs so the coordinator never blocks while workers
-	// are reporting completion.
 	jobs := make(chan int, len(repos))
-	done := make(chan struct{})
+	results := make(chan repoAlerts, len(repos))
 
 	workerCount := min(alertWorkers, len(repos))
 
@@ -331,56 +327,49 @@ func getAlertsInParallel(ctx context.Context, client *api.RESTClient, repos []Re
 			defer wg.Done()
 
 			for i := range jobs {
-				if ctx.Err() != nil {
-					return
-				}
-
 				repo := repos[i]
 				alerts, err := getAlerts(ctx, client, repo.Owner.Login, repo.Name)
-				results[i] = repoAlerts{
+				results <- repoAlerts{
 					Repo:   repo,
 					Alerts: alerts,
 					Err:    err,
-				}
-				select {
-				case done <- struct{}{}:
-				case <-ctx.Done():
-					return
 				}
 			}
 		}()
 	}
 
-	// Queue all repositories. The channel is buffered, so this does
-	// not block waiting for workers to consume jobs.
 	for i := range repos {
-		select {
-		case jobs <- i:
-		case <-ctx.Done():
-			close(jobs)
-			wg.Wait()
-			return results
-		}
+		jobs <- i
 	}
 	close(jobs)
 
-	s := newSpinner(fmt.Sprintf("Checking repositories: 0/%d processed (%d parallel queries)",
-		len(repos), workerCount))
 	go func() {
 		wg.Wait()
-		close(done)
+		close(results)
 	}()
+
+	s := newSpinner(fmt.Sprintf("Checking repositories: 0/%d processed",
+		len(repos)))
+	defer s.Stop()
+
+	collected := make([]repoAlerts, 0, len(repos))
 	processed := 0
-	for range done {
+
+	for result := range results {
+		collected = append(collected, result)
 		processed++
+
 		if processed%progressEvery == 0 || processed == len(repos) {
-			s.Suffix = fmt.Sprintf(" Checking repositories: %d/%d processed (%d parallel queries)",
-				processed, len(repos), workerCount)
+			s.Suffix = fmt.Sprintf(" Checking repositories: %d/%d processed",
+				processed, len(repos))
 		}
 	}
-	s.Stop()
 
-	return results
+	sort.Slice(collected, func(i, j int) bool {
+		return collected[i].Repo.FullName < collected[j].Repo.FullName
+	})
+
+	return collected
 }
 
 func main() {
