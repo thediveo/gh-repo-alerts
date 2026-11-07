@@ -360,8 +360,10 @@ func getAlertsInParallel(ctx context.Context, client *api.RESTClient, repos []Re
 		processed++
 
 		if processed%progressEvery == 0 || processed == len(repos) {
+			s.Lock()
 			s.Suffix = fmt.Sprintf(" Checking repositories: %d/%d processed",
 				processed, len(repos))
+			s.Unlock()
 		}
 	}
 
