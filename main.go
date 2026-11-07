@@ -85,6 +85,7 @@ type repoAlerts struct {
 
 func newSpinner(message string) *spinner.Spinner {
 	s := spinner.New(spinnerDots, spinnerDelay, spinner.WithWriter(os.Stderr))
+	s.Color("reset")
 	s.Suffix = " " + message
 	s.Start()
 	return s
